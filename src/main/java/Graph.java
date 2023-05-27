@@ -12,6 +12,12 @@ public class Graph implements Iterable<Integer> {
     private int processorsReserved = 6;
     private final Deque<Integer> startingQueue = new ConcurrentLinkedDeque<>();
 
+    public int size = 0;
+
+    public int[] localNodes;
+
+    public int[] adjMatrix;
+
     public List<Node> nodes = new CopyOnWriteArrayList<>();
 
     private final Deque<Integer> queue = new ConcurrentLinkedDeque<Integer>();
@@ -46,7 +52,14 @@ public class Graph implements Iterable<Integer> {
             //System.out.println(Arrays.toString(adjNodesArray));
             this.addNode(adjNodesArray);
         }
-
+        localNodes = new int[this.size()];
+        adjMatrix = new int[this.size() * this.size()];
+        for (int i = 0; i < this.size(); i++) {
+            localNodes[i] = i;
+            for (int j = 0; j < nodes.get(i).adj.size(); j++) {
+                adjMatrix[i * this.size() + nodes.get(i).adj.get(j)] = 1;
+            }
+        }
     }
 
     public int getStartNodeId() {
@@ -68,7 +81,7 @@ public class Graph implements Iterable<Integer> {
     }
 
     public int size() {
-        return nodes.size();
+        return this.size;
     }
 
     public void addNode(List<Integer> adj) {
@@ -82,6 +95,7 @@ public class Graph implements Iterable<Integer> {
             startingQueue.add(startNodeId);
         }
         nodes.add(node);
+        size++;
     }
 
     public void addNode(int... adj) {
@@ -95,6 +109,7 @@ public class Graph implements Iterable<Integer> {
             startingQueue.add(startNodeId);
         }
         nodes.add(node);
+        size++;
     }
 
     public boolean isParallelDistancesEqual() {
@@ -165,29 +180,27 @@ public class Graph implements Iterable<Integer> {
     }
 
     public void MPIBFS() {
+        long time = Calendar.getInstance().getTimeInMillis();
+        long fulltime = Calendar.getInstance().getTimeInMillis();
+        long[] totalTimes = new long[6];
+        int[] MPIdistances = IntStream.range(0, this.size()).map(it -> Integer.MAX_VALUE).toArray();
         int rank = MPI.COMM_WORLD.Rank();
         int processorsAmount = MPI.COMM_WORLD.Size();
         //System.out.println("From <"+rank+">: <"+size+">");
         int level = 0;
-        int[] MPIdistances = IntStream.range(0, this.size()).map(it -> Integer.MAX_VALUE).toArray();
+        int served = 0;
         int[] nextFrontier = new int[this.size()];
         nextFrontier[startingQueue.getFirst()] = 1;
         int[] visited = new int[this.size()];
-        int[] localNodes = new int[this.size()];
-        int[] adjMatrix = new int[this.size() * this.size()];
-        //if (rank == 0) {
-            for (int i = 0; i < this.size(); i++) {
-                localNodes[i] = i;
-                for (int j = 0; j < nodes.get(i).adj.size(); j++) {
-                    adjMatrix[i * this.size() + nodes.get(i).adj.get(j)] = 1;
-                }
-            }
-        //}
+
+        totalTimes[0] = totalTimes[0] + Calendar.getInstance().getTimeInMillis() - time;
         //MPI.COMM_WORLD.Barrier();
         //MPI.COMM_WORLD.Bcast(adjMatrix, 0, this.size() * this.size(), MPI.INT, 0);
         //MPI.COMM_WORLD.Bcast(localNodes, 0, this.size(), MPI.INT, 0);
         //System.out.println("Processor #<"+rank+"> adjMatrix is <"+ Arrays.toString(adjMatrix) +">");
         //System.out.println("Processor #<"+rank+"> localNodes is <"+ Arrays.toString(localNodes) +">");
+
+        time = Calendar.getInstance().getTimeInMillis();
         while(Arrays.stream(nextFrontier).anyMatch(it -> it == 1)) {
             int chunk = this.size() / processorsAmount + this.size() % processorsAmount;
             int[] currentFrontier = new int[chunk];
@@ -197,75 +210,52 @@ public class Graph implements Iterable<Integer> {
             nextFrontier = new int[this.size()];
             //System.out.println("Process <"+rank+"> have frontier of <"+ Arrays.toString(currentFrontier) +">");
 
+            Set<Integer> currentFrontierSet = new HashSet<>();
             for (int i = 0; i < currentFrontier.length; i ++) {
                 if (currentFrontier[i] == 1) {
+                    currentFrontierSet.add(i);
+                }
+            }
+            totalTimes[1] = totalTimes[1] + Calendar.getInstance().getTimeInMillis() - time;
+            //System.out.println("Process <"+rank+"> have frontier of size <"+ currentFrontierSet.size() +">");
+            time = Calendar.getInstance().getTimeInMillis();
+            for (Integer i : currentFrontierSet) {
+                //if (currentFrontier[i] == 1) {
                     int node = localNodes[i + rank * chunk];
-                    //System.out.println("Processor <" + rank + "> now processes node #<" + node + ">");
 
                     if (visited[node] == 0) {
+                        //System.out.println("Processor <" + rank + "> now processes node #<" + node + ">");
                         MPIdistances[node] = level;
+                        served++;
 
-                        for (int j = 0; j < this.size(); j ++) {
-                            //System.out.println("Processor #<" + rank + "> works out adj (" + adjMatrix[node * this.size() + j] + ") of node #<" + node + ">");
-
-                            if (adjMatrix[node * this.size() + j] == 1) {
-                                //System.out.println("Processor #<" + rank + "> confirmed adj (" + adjMatrix[node * this.size() + j] + ") of node #<" + node + ">");
+                        for (Integer j : nodes.get(node).adj) {
+                            if (visited[j] == 0) {
                                 nextFrontier[j] = 1;
-                                //System.out.println("Processor #<" + rank + "> confirmed new next frontier would be " + Arrays.toString(nextFrontier) + ">");
                             }
                         }
+//                        for (int j = 0; j < this.size(); j ++) {
+//                            //System.out.println("Processor #<" + rank + "> works out adj (" + adjMatrix[node * this.size() + j] + ") of node #<" + node + ">");
+//
+//                            if (adjMatrix[node * this.size() + j] == 1 && visited[j] == 0) {
+//                                //System.out.println("Processor #<" + rank + "> confirmed adj (" + adjMatrix[node * this.size() + j] + ") of node #<" + node + ">");
+//                                nextFrontier[j] = 1;
+//                                //System.out.println("Processor #<" + rank + "> confirmed new next frontier would be " + Arrays.toString(nextFrontier) + ">");
+//                            }
+//                        }
                         visited[node] = 1;
                     }
-                }
+                nextFrontier[node] = 0;
+                //}
             }
+            totalTimes[2] = totalTimes[2] + Calendar.getInstance().getTimeInMillis() - time;
+            time = Calendar.getInstance().getTimeInMillis();
+            int[] displs = IntStream.range(0, processorsAmount).map(it -> it * this.size()).toArray();//new int[processorsAmount];
 
-            int[] displs = IntStream.range(0, processorsAmount).map(it -> 2 * it * this.size()).toArray();//new int[processorsAmount];
-            int[] recvcount = IntStream.range(0, processorsAmount).map(it -> 2 * this.size()).toArray();
-
-//            MPI.COMM_WORLD.Barrier();
-//            // MPI gather local frontiers sizes
-//            int[] localFrontierSize = new int[1];
-//            localFrontierSize[0] = nextFrontier.length;
-
-//            MPI.COMM_WORLD.Allgather(localFrontierSize, 0, 1, MPI.INT,
-//                    recvcount, 0, 1, MPI.INT);
-//            System.out.println("Processor #"+rank+"> confirms sizes of new frontiers <"+ Arrays.toString(recvcount) +">");
-
-            //int[] = new int[processorsAmount];
             //MPI.COMM_WORLD.Barrier();
-            // MPI gather next frontier
-            //int[] localNext = nextFrontier.stream.mapToInt(it -> it).toArray();
-            int[] sendbuff = Arrays.copyOf(nextFrontier, 2 * this.size());
-            System.arraycopy(visited, 0, sendbuff, this.size(), visited.length);
-            System.out.println("Processor #<"+rank+"> says sendbuff <"+ Arrays.toString(sendbuff) +">");
-            int[] recvbuf = new int[2 * processorsAmount * this.size()];
-
-            MPI.COMM_WORLD.Allgatherv(sendbuff, 0, sendbuff.length, MPI.INT,
-                    recvbuf, 0, recvcount, displs, MPI.INT);
-//            MPI.COMM_WORLD.Allgatherv(visited, 0, visited.length, MPI.INT,
-//                    visitedArray, 0, recvcount, displs, MPI.INT);
-            System.out.println("Processor #<"+rank+"> says recvbuf <"+ Arrays.toString(recvbuf) +">");
-            for (int i = 0; i < processorsAmount; i ++) {
-                for (int j = 0; j < this.size(); j ++) {
-                    nextFrontier[j] = recvbuf[i * this.size() + j];
-                }
-            }
-            for (int i = 0; i < processorsAmount; i ++) {
-                for (int j = 0; j < this.size(); j ++) {
-                    visited[j] = Integer.max(visited[j], recvbuf[processorsAmount * this.size() + i * this.size() + j]);
-                }
-            }
-
-            //System.out.println("Processor <"+rank+"> reports visited following <"+ Arrays.toString(visitedArray) +"> nodes");
-
-            System.out.println("Processor #<"+rank+"> folds new frontier as <"+ Arrays.toString(nextFrontier) +">");
-
-
-//            MPI.COMM_WORLD.Barrier();
 //            // MPI gather local visited sizes
 //            int[] localVisitedSize = new int[1];
 //            localVisitedSize[0] = visited.size();
-//             int[] nextVisitedSizes = IntStream.range(0, this.size()).map(it -> this.size()).toArray();//new int[processorsAmount];
+            int[] nextVisitedSizes = IntStream.range(0, this.size()).map(it -> this.size()).toArray();//new int[processorsAmount];
 //            MPI.COMM_WORLD.Allgather(localVisitedSize, 0, 1, MPI.INT,
 //                    nextVisitedSizes, 0, 1, MPI.INT);
 //            System.out.println("Processor <"+rank+"> reports visited <"+ Arrays.toString(nextVisitedSizes) +"> nodes");
@@ -273,37 +263,70 @@ public class Graph implements Iterable<Integer> {
             //MPI.COMM_WORLD.Barrier();
             // MPI gather visited
             //int[] localVisited = visited.stream().mapToInt(it -> it).toArray();
-
+            int[] visitedArray = new int[processorsAmount * this.size()];
             //System.out.println("Processor <"+rank+"> reports visited: <"+ Arrays.toString(localVisited) +"> nodes");
             //System.out.println("Processor <"+rank+"> reports visited following <"+ Arrays.toString(visitedArray) +"> nodes");
-
-            System.out.println("Processor <"+rank+"> folds visited as <"+ Arrays.toString(visited) +">");
-
-            //MPI.COMM_WORLD.Barrier();
-            displs = IntStream.range(0, processorsAmount).map(it -> it * this.size()).toArray();//new int[processorsAmount];
-            recvcount = IntStream.range(0, processorsAmount).map(it -> this.size()).toArray();
-            int[] distancesArray = new int[processorsAmount * this.size()];
-            MPI.COMM_WORLD.Allgatherv(MPIdistances, 0, MPIdistances.length, MPI.INT,
-                    distancesArray, 0, recvcount, displs, MPI.INT);
+            MPI.COMM_WORLD.Allgatherv(visited, 0, visited.length, MPI.INT,
+                    visitedArray, 0, nextVisitedSizes, displs, MPI.INT);
+            //System.out.println("Processor <"+rank+"> reports visited following <"+ Arrays.toString(visitedArray) +"> nodes");
             for (int i = 0; i < processorsAmount; i ++) {
                 for (int j = 0; j < this.size(); j ++) {
-                    MPIdistances[j] = Integer.min(MPIdistances[j], distancesArray[i * this.size() + j]);
+                    visited[j] = Integer.max(visited[j], visitedArray[i * this.size() + j]);
                 }
             }
-            //System.out.println("<"+rank+">: overall distances are <"+ Arrays.toString(MPIdistances) +">");
+            totalTimes[3] = totalTimes[3] + Calendar.getInstance().getTimeInMillis() - time;
+            //System.out.println("Processor <"+rank+"> folds visited as <"+ Arrays.toString(visited) +">");
+            time = Calendar.getInstance().getTimeInMillis();
+
+//            MPI.COMM_WORLD.Barrier();
+//            // MPI gather local frontiers sizes
+//            int[] localFrontierSize = new int[1];
+//            localFrontierSize[0] = nextFrontier.length;
+            int[] nextFrontierSizes = IntStream.range(0, this.size()).map(it -> this.size()).toArray();
+//            MPI.COMM_WORLD.Allgather(localFrontierSize, 0, 1, MPI.INT,
+//                    nextFrontierSizes, 0, 1, MPI.INT);
+//            System.out.println("Processor #"+rank+"> confirms sizes of new frontiers <"+ Arrays.toString(nextFrontierSizes) +">");
+
+            //int[] = new int[processorsAmount];
+            //MPI.COMM_WORLD.Barrier();
+            // MPI gather next frontier
+            //int[] localNext = nextFrontier.stream.mapToInt(it -> it).toArray();
+            int[] nextFrontierArray = new int[processorsAmount * this.size()];
+            MPI.COMM_WORLD.Allgatherv(nextFrontier, 0, nextFrontier.length, MPI.INT,
+                    nextFrontierArray, 0, nextFrontierSizes, displs, MPI.INT);
+            //System.out.println("Processor #<"+rank+"> says full new frontiers <"+ Arrays.toString(nextFrontierArray) +">");
+            for (int i = 0; i < processorsAmount; i ++) {
+                for (int j = 0; j < this.size(); j ++) {
+                    if (visited[j] == 0) {
+                        nextFrontier[j] = Integer.max(nextFrontier[j], nextFrontierArray[i * this.size() + j]);
+                    }
+                }
+            }
+            totalTimes[4] = totalTimes[4] + Calendar.getInstance().getTimeInMillis() - time;
+            //System.out.println("Processor #<"+rank+"> folds new frontier as <"+ Arrays.toString(nextFrontier) +">");
+            time = Calendar.getInstance().getTimeInMillis();
 
             level++;
-            System.out.println("\nNext level: " + level);
-            if (level == 10) {
-                break;
-            }
+            //System.out.println("\nNext level: " + level);
             //MPI.COMM_WORLD.Barrier();
+        }
+        int[] distancesArray = new int[processorsAmount * this.size()];
+        MPI.COMM_WORLD.Allgather(MPIdistances, 0, MPIdistances.length, MPI.INT,
+                distancesArray, 0, this.size(), MPI.INT);
+        for (int i = 0; i < processorsAmount; i ++) {
+            for (int j = 0; j < this.size(); j ++) {
+                MPIdistances[j] = Integer.min(MPIdistances[j], distancesArray[i * this.size() + j]);
+            }
         }
         if (rank == 0) {
             for (int i = 0; i < this.size(); i++) {
                 nodes.get(i).parallelDistance.set(0, MPIdistances[i]);
             }
         }
+        totalTimes[5] = totalTimes[5] + Calendar.getInstance().getTimeInMillis() - time;
+        //System.out.println("Processor <"+rank+"> spent <"+ (Calendar.getInstance().getTimeInMillis() - fulltime) +">ms total");
+        System.out.println("Processor <"+rank+"> wasted <"+ Arrays.toString(totalTimes) +">ms");
+        //System.out.println("Processor <"+rank+"> served <"+ served +"> nodes");
     }
 
     public void parallelBFS(int processorsAmount) {
@@ -361,7 +384,7 @@ public class Graph implements Iterable<Integer> {
                         queue.addAll(nodes.get(next).adj
                                 .stream().filter(it -> !visitedNodes.contains(it)).collect(Collectors.toSet()));
                     //}
-                    visitedNodes.add(next); // !!!
+                    visitedNodes.add(next);
                     synchronized (nodes) {
                         for (Integer i : nodes.get(next).adj) {
                             //System.out.println("Got over here!");
@@ -384,7 +407,7 @@ public class Graph implements Iterable<Integer> {
         private final int id;
         private int serialDistance = Integer.MAX_VALUE;
         private final CopyOnWriteArrayList<Integer> parallelDistance = new CopyOnWriteArrayList<>();
-        private List<Integer> adj = new CopyOnWriteArrayList<>();
+        private List<Integer> adj = new ArrayList<>();
 
         public Node(int id, List<Integer> adj) {
             this.id = id;
