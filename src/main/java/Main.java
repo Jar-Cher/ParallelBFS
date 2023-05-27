@@ -60,7 +60,7 @@ public class Main {
         //for (int j = 0; j < 20; j++) {
         //System.out.println(graph.serialBFS());
         int[][] times = new int[6][30];
-        Graph graph1 = new Graph(1000);
+        Graph graph1 = new Graph(3000);
         //System.out.println(graph1);
         long time = 0;
         //System.out.println(args.length);
