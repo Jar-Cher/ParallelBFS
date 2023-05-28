@@ -39,6 +39,20 @@ public class Tests {
     }
 
     @Test
+    public void cycleTest() {
+        Graph graph = new Graph();
+        graph.addNode(1, 2);
+        graph.addNode(3, 4);
+        graph.addNode(5, 6);
+        graph.addNode(0);
+        graph.addNode();
+        graph.addNode();
+        graph.addNode(7);
+        graph.addNode(2);
+        assertEquals("0 1 2 3 4 5 6 7 ", graph.serialBFS());
+    }
+
+    @Test
     public void StartNodeIdChangeTest() {
         Graph graph = new Graph(5);
         graph.addNode();
